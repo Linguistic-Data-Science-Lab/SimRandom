@@ -1,0 +1,84 @@
+---
+title: "Random comparison"
+output: html_document
+date: "18.05.2023"
+author: "Tibor Kiss"
+---
+
+#### Libraries
+
+```{r libraries, warning=FALSE, message=FALSE}
+
+library(lme4)
+library(tidyverse)
+
+show(version)
+```
+
+#### Data
+
+```{r data}
+
+data <- read.csv2("Data/sim_data.csv", stringsAsFactors = TRUE) %>%
+  mutate(subjects = factor(subjects),
+         items = factor(items))
+
+summary(data)
+
+```
+
+#### Models
+
+The models have different (spurious) convergence problems. The problems of M1 can be overcome by restarting, the problems of M2 by using a different optimizer. 
+
+```{r models}
+
+M1 <-
+  glmer(formula = CHOICE ~ A * B + 
+          (0 + A * B  | subjects) + (1 | items), 
+        data = data, family = binomial())
+
+start <-
+  getME(M1, c("theta", "fixef"))
+
+M1 <- 
+  update(M1, start = start,
+         control=glmerControl(optCtrl=list(maxfun=2e4)))
+
+print(summary(M1), corr = FALSE)
+
+
+M2 <-
+  glmer(formula = CHOICE ~ A * B +
+          (1 + A * B  | subjects) + (1 | items), 
+        data = data, family = binomial(),
+        control=glmerControl(optimizer = "nloptwrap",
+                             optCtrl = list(algorithm = "NLOPT_LN_NELDERMEAD")))
+
+print(summary(M2), corr = FALSE)
+
+```
+
+#### Comparison of random factors
+
+```{r ramdom factors}
+
+M1.df <- data.frame(round(ranef(M1)$subjects, 2)) %>%
+  mutate(participants = rownames(.)) %>%
+  as.data.frame()
+
+colnames(M1.df)[1:4] <- c("M1_A1B1", "M1_A2B1", "M1_A1B2", "M1_A2B2")
+
+M2.df <- 
+  data.frame(round(ranef(M2)$subjects, 2)) %>%
+  mutate(participants = rownames(.)) %>%
+  as.data.frame()
+
+colnames(M2.df)[1:4] <- c("M2_A1B1", "M2_A2B1", "M2_A1B2", "M2_A2B2")
+
+compare <- cbind(M1.df[, c(5, 1:4)], M2.df[, 1:4])
+
+options(width = 300)
+compare[1:5,]
+```
+
