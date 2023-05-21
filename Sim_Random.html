@@ -388,7 +388,8 @@ show(version)</code></pre>
 <h4>Data</h4>
 <pre class="r"><code>data &lt;- read.csv2(&quot;Data/sim_data.csv&quot;, stringsAsFactors = TRUE) %&gt;%
   mutate(subjects = factor(subjects),
-         items = factor(items))
+         items = factor(items)
+  )
 
 summary(data)</code></pre>
 <pre><code>##  CHOICE    A        B          subjects       items    

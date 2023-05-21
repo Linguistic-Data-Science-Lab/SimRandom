@@ -21,7 +21,8 @@ show(version)
 
 data <- read.csv2("Data/sim_data.csv", stringsAsFactors = TRUE) %>%
   mutate(subjects = factor(subjects),
-         items = factor(items))
+         items = factor(items)
+  )
 
 summary(data)
 

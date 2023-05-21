@@ -1,0 +1,215 @@
+---
+title: "STM_analyses_random"
+output: html_document
+date: "19.05.2023"
+author: "Tibor Kiss"
+---
+
+#### Original analyses and documentation by Simon Masloch
+
+```{r libraries, warning=FALSE, message=FALSE}
+library(lme4)
+library(tidyverse)
+library(ordinal)
+library(brms)
+```
+
+#### Helper function to simulate a given correlation
+
+This way of simulating a given correlation is found in https://stats.stackexchange.com/questions/15011/generate-a-random-variable-with-a-defined-correlation-to-an-existing-variables.
+
+```{r correlation simulation}
+
+randomly_permute <- 
+  function(vec) vec[sample.int(length(vec))] # randomly permutes input vector
+
+# The following function permutes the input vector and correlates it to the 
+# reference vector.
+
+permute_and_correlate <- function(vec, reference_vec) {
+    perm_vec = randomly_permute(vec)
+    cor_value = cor(perm_vec, reference_vec)
+    return(list(vec = perm_vec, cor = cor_value))
+  }
+
+# Repeat and find vector with closest correlation: 
+
+# n_iterations = lapply(1:1000, function(x) permute_and_correlate(vec2, vec1))
+# n_iterations[[which.min(abs(cor_values - REQUIRED_VALUE))]]
+
+```
+
+### Word order FC inanim anim
+
+Forced-choice experiment word order with experiencer-object verbs with inanimate subjects. Dependent variable: order, independent variable: object case.
+
+```{r data preparation}
+item_data <- 
+  read_csv("Data/jatos_results_FC_inanim_anim_study_data.csv", col_types = "ffffffffcfccccttif") %>%
+  filter(workerId %in% c(402, 404, 406, 407, 408, 410, 413, 414, 415, 416, 
+                         417, 419, 420, 421, 422, 423, 424, 425, 426, 428, 
+                         429, 432, 433, 434, 439, 441, 443, 444, 449))
+
+test_item_data <- 
+  filter(item_data, ITEM_FUNCTION == "test") %>%
+  mutate(case = relevel(case, ref = "acc"),
+         ANSWER = factor(ANSWER, levels = c("SubjObj", "ObjSubj")),
+         ANSWER_POSITION = factor(ANSWER_POSITION),
+         subjects = factor(workerId),
+         items = factor(ITEM_ID)) %>%
+  select(case, verb, ANSWER, ANSWER_POSITION, trial_index, subjects, items) %>%
+  droplevels()
+
+summary(test_item_data)
+```
+
+### Distribution of Judgments
+
+```{r distribution of judgments, fig.width = 10, message = FALSE, warning = FALSE}
+
+case.labels <- c("Accusative", "Dative")
+names(case.labels) <- c("acc", "dat")
+
+stm_fc_summary <- 
+  test_item_data %>%
+  group_by(case, ANSWER) %>% 
+  summarise(count = n())
+
+ggplot(stm_fc_summary, aes(x = ANSWER, y = count, fill = ANSWER)) +
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  scale_fill_manual(name = "Choice", values = c("pink", "seashell")) +
+  scale_x_discrete(labels = c("SO", "OS")) +
+  facet_wrap(~case, labeller = labeller(case = case.labels)) +
+  labs(x = "Choices", y = "Frequency of Choice") +
+  theme(axis.title.x = element_blank())
+```
+
+### Model
+
+The following model differs from SM's model in the random structure, **which does not assume an intercept**. 
+
+```{r dative model, cache = TRUE}
+test_item_data_dat_ref <- test_item_data %>%
+    mutate(case = fct_relevel(case, "dat"))
+
+stm_fc_dat_ref_model <-  glmer(formula = ANSWER ~ case + (0 + case | subjects) + (1 | items), 
+        data = test_item_data_dat_ref, family = binomial())
+
+print(summary(stm_fc_dat_ref_model), corr = FALSE)
+```
+
+Negative estimates push towards SO, positive ones towards OS.
+
+### Random effects
+
+```{r random effects, message = FALSE}
+
+cor_vals_FC_inanim <- data.frame(VarCorr(stm_fc_dat_ref_model))
+
+ranef_dat.df <- data.frame(round(ranef(stm_fc_dat_ref_model)$subjects, 2)) %>%
+  mutate(PARTICIPANTS = rownames(.)) 
+
+colnames(ranef_dat.df)[1:2] <- c("DATIVE", "ACCUSATIVE")
+
+ranef_dat.df
+
+n_iterations = lapply(1:1000, function(x) permute_and_correlate(runif(29), ranef_dat.df$ACCUSATIVE))
+
+
+cor_values = sapply(n_iterations, '[[', 'cor')
+
+ranef_dat.df$SIM <- (n_iterations[[which.min(abs(cor_values - cor_vals_FC_inanim$sdcor[3]))]]$vec)-0.5
+
+## To plot the correlation in the center of the scatterplot, it is necessary to add/subtract a constant.
+
+ggplot(ranef_dat.df, aes(x = ACCUSATIVE, y = DATIVE, label = PARTICIPANTS)) +
+  geom_text() + 
+  geom_smooth(aes(y = SIM), method = "lm", color = "steelblue", se = FALSE, linetype = "dashed") +
+  theme_bw() +
+  labs(x = "Sentences with Accusative", y = "Sentences with Dative",
+    subtitle = "Correlation of random intercept for participants and random slope for case",
+       caption = paste("The higher the value, the higher the probability for OS. Correlation is ",
+                       round(cor_vals_FC_inanim$sdcor[3], 2)))
+
+```
+
+
+**Comments (TK): **
+
+1. The actual correlation in the sample is **`r round(cor(ranef_dat.df$DATIVE, ranef_dat.df$ACCUSATIVE), 2)`** (just included for illustration).
+2. Why do we plot the intercept on the y-axis?
+3. SM writes: _We could interpret this positive correlation (which is not to be found in the model summary directly!)_ Well, we do now. 
+
+#### Second Model with SM random structure
+
+```{r second dative model, cache = TRUE}
+
+model_2 <-  glmer(formula = ANSWER ~ case + (1 + case | subjects) + (1 | items), 
+        data = test_item_data_dat_ref, family = binomial())
+
+print(summary(model_2), corr = FALSE)
+
+ranef_dat_2.df <- data.frame(round(ranef(model_2)$subjects, 2)) %>%
+  mutate(PARTICIPANTS = rownames(.)) 
+
+colnames(ranef_dat_2.df)[1:2] <- c("DATIVE", "ACCUSATIVE")
+
+ranef_dat_2.df$ACC_correct <- ranef_dat_2.df$DATIVE + ranef_dat_2.df$ACCUSATIVE 
+
+ranef_dat_2.df <- ranef_dat_2.df[, c(1:2, 4, 3)]
+ranef_dat_2.df
+
+cor_vals_FC_inanim <- data.frame(VarCorr(model_2))
+
+n_iterations = lapply(1:1000, function(x) permute_and_correlate(runif(29), ranef_dat.df$ACCUSATIVE))
+
+cor_values = sapply(n_iterations, '[[', 'cor')
+
+ranef_dat_2.df$SIM <- (n_iterations[[which.min(abs(cor_values - cor_vals_FC_inanim$sdcor[3]))]]$vec)-0.4
+
+ggplot(ranef_dat_2.df, aes(x = ACCUSATIVE, y = DATIVE, label = PARTICIPANTS)) +
+  geom_text() + 
+  geom_smooth(aes(y = SIM), method = "lm", color = "steelblue", se = FALSE, linetype = "dashed") +
+  theme_bw() +
+  labs(x = "Sentences with Accusative", y = "Sentences with Dative",
+    subtitle = "Plot based on SM's original model with random slope not added to intercept")
+
+ggplot(ranef_dat_2.df, aes(x = ACC_correct, y = DATIVE, label = PARTICIPANTS)) +
+  geom_text() + 
+  theme_bw() +
+  labs(x = "Sentences with Accusative", y = "Sentences with Dative",
+    subtitle = "Plot based on SM's original model with random slope added to intercept")
+
+
+```
+
+### Adding up fixed and random factors
+
+SM says: _Possibly, what we are interested in is not so much the random slope itself, but the value a participant ends up with in a certain condition._
+
+```{r summing up fixed and random effects}
+
+pred_vals.df <-
+  ranef_dat.df %>%
+  mutate(DATIVE_SUM = stm_fc_dat_ref_model@beta[1] + DATIVE,
+         ACCUSATIVE_SUM = DATIVE_SUM + stm_fc_dat_ref_model@beta[2] + ACCUSATIVE)
+
+ggplot(pred_vals.df, aes(x = ACCUSATIVE_SUM, y = DATIVE_SUM, label = PARTICIPANTS)) +
+  geom_text() +
+  theme_bw() +
+  labs(x = "Linear prediction for accusative verbs",
+       y = "Linear preduction for dative verbs",
+       caption = paste("Correlation of probabilities to choose OS for both conditions:", 
+                       round(cor(pred_vals.df$ACCUSATIVE_SUM, pred_vals.df$DATIVE_SUM), 3)))
+```
+
+
+
+SM writes: _We could interpret this positive correlation (which is not to be found in the model summary directly!) as indicating that participants who are inclined to choose OS with accusative verbs also are inclined to choose it with dative verbs. This may have grammatical reasons (if there was a rule like subj > obj, some participants may weight it higher than others), but it could also have extra-grammatical reasons (How aware are the participants of the intended context? Do they actually read the question preceding the sentences?)._
+
+
+
+
+
+
+
